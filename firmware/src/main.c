@@ -58,6 +58,11 @@ void cmdRun();
 __xdata char tbuffer[64];
 //Receive buffer (from the ack)
 __xdata char rbuffer[64];
+// Address for bulk tx
+__xdata char bulkAddress[5] = { 0xE7, 0xE7, 0xE7, 0, 0 };
+// data for bulk tx, starts with
+#define DISPLAY_COLOR_COMMAND 0x00
+__xdata char bulkNodePacket[4] = { DISPLAY_COLOR_COMMAND, 0, 0, 0 };
 
 //Limits the scann result to 63B to avoid having to send two result USB packet
 //See usb_20.pdf #8.5.3.2
@@ -456,6 +461,7 @@ void legacyRun()
   char tlen;  //Transmit length
   char rlen;  //Received packet length
   uint8_t ack;
+  char cmdPtr;
 
   //Send a packet if something is received on the USB
   if (!(OUT1CS&EPBSY) && !contCarrier)
@@ -470,12 +476,38 @@ void legacyRun()
     //reactivate OUT1
     OUT1BC=BCDUMMY;
 
-    if (needAck)
+    cmdPtr = 0;
+    rlen = 0;
+    status = 0;
+
+    if (true)
     {
       // Limit data size to 32
-      if (tlen>32) tlen=32;
+      //if (tlen>32) tlen=32;
 
-      status = radioSendPacket(tbuffer, tlen, rbuffer, &rlen);
+      //status = radioSendPacket(tbuffer, tlen, rbuffer, &rlen);
+      // new
+      // ADDR_HIGH, INDEX R G B, INDEX R G B...
+      bulkAddress[3] = tbuffer[cmdPtr++]; //address high
+      // consume packet and send out to node
+      while(cmdPtr < tlen){
+        bulkAddress[4] = tbuffer[cmdPtr++];
+        if(bulkAddress[4] != 0xFF) {
+          // IF INDEX == 255, skip it
+          radioSetAddress(bulkAddress);
+          // bulk node packet includes DISPLAY_COLOR command when declared
+          bulkNodePacket[1] = tbuffer[cmdPtr++]; //R
+          bulkNodePacket[2] = tbuffer[cmdPtr++]; //G
+          bulkNodePacket[3] = tbuffer[cmdPtr++]; //B
+          if(needAck){
+            status = radioSendPacket(bulkNodePacket, 4, rbuffer, &rlen);
+          }else{
+            radioSendPacketNoAck(bulkNodePacket, 4);
+          }
+        }else{
+          cmdPtr += 3;
+        }
+      }
 
       //Set the Green LED on success and the Red one on failure
       //The SOF interrupt decrement ledTimeout and will reset the LEDs when it
@@ -500,26 +532,11 @@ void legacyRun()
 
       IN1BUF[0]=ack;
       if(!(status&BIT_TX_DS)) rlen=0;
+      // hack truncate rlen
+      if (rlen>32) rlen=32;
       memcpy(IN1BUF+1, rbuffer, rlen);
       //Activate the IN EP with length+status
       IN1BC = rlen+1;
-    }
-    else
-    {
-      if (tlen <= 32) {
-        radioSendPacketNoAck(tbuffer, tlen);
-      } else {
-        // If we receive a USB packet > 32 bytes, we assume that the user wants
-        // to broadcast two packets of the same size. We can not transmit the
-        // size because a USB request is limited to 64 bytes and each CRTP
-        // packet could be up to 32 bytes.
-        radioSendPacketNoAck(tbuffer, tlen / 2);
-        radioSendPacketNoAck(tbuffer + tlen / 2, tlen / 2);
-      }
-
-      ledTimeout = 2;
-      ledSet(LED_GREEN | LED_RED, false);
-      ledSet(LED_GREEN, true);
     }
   }
 }
@@ -587,9 +604,32 @@ void cmdRun()
             break;
           }
 
+          // old
           status = radioSendPacket(&tbuffer[cmdPtr], plen,
                                    rpbuffer, &rlen);
           cmdPtr += plen;
+
+          // new
+          // ADDR_HIGH, INDEX R G B, INDEX R G B...
+//          bulkAddress[3] = tbuffer[cmdPtr++]; //address high
+//          plen--;
+//          // consume packet and send out to node
+//          while(plen > 0){
+//            bulkAddress[4] = tbuffer[cmdPtr++];
+//            if(bulkAddress[4] != 0xFF) {
+//              // IF INDEX == 255, skip it
+//              radioSetAddress(bulkAddress);
+//              // bulk node packet includes DISPLAY_COLOR command when declared
+//              bulkNodePacket[1] = tbuffer[cmdPtr++]; //R
+//              bulkNodePacket[2] = tbuffer[cmdPtr++]; //G
+//              bulkNodePacket[3] = tbuffer[cmdPtr++]; //B
+//              status = radioSendPacket(bulkNodePacket, 4, rpbuffer, &rlen);
+//            }else{
+//              cmdPtr += 3;
+//            }
+//            plen -= 4;
+//          }
+//          cmdPtr++;
 
           ledTimeout = 2;
           ledSet(LED_GREEN | LED_RED, false);
