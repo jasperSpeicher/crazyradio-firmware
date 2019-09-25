@@ -67,6 +67,8 @@ __xdata char bulkNodePacket[4] = { DISPLAY_COLOR_COMMAND, 0, 0, 0 };
 //Limits the scann result to 63B to avoid having to send two result USB packet
 //See usb_20.pdf #8.5.3.2
 #define MAX_SCANN_LENGTH 63
+#define CMD_SINGLE_TX 255
+
 static char scannLength;
 
 static bool contCarrier=false;
@@ -489,23 +491,28 @@ void legacyRun()
       // new
       // ADDR_HIGH, INDEX R G B, INDEX R G B...
       bulkAddress[3] = tbuffer[cmdPtr++]; //address high
-      // consume packet and send out to node
-      while(cmdPtr < tlen){
-        bulkAddress[4] = tbuffer[cmdPtr++];
-        if(bulkAddress[4] != 0xFF) {
-          // IF INDEX == 255, skip it
-          radioSetAddress(bulkAddress);
-          // bulk node packet includes DISPLAY_COLOR command when declared
-          bulkNodePacket[1] = tbuffer[cmdPtr++]; //R
-          bulkNodePacket[2] = tbuffer[cmdPtr++]; //G
-          bulkNodePacket[3] = tbuffer[cmdPtr++]; //B
-          if(needAck){
-            status = radioSendPacket(bulkNodePacket, 4, rbuffer, &rlen);
+      if(bulkAddress[3] == CMD_SINGLE_TX){
+        // Skip bulk tx if address is CMD_SINGLE_TX
+        status = radioSendPacket(&tbuffer[cmdPtr], tlen-cmdPtr, rbuffer, &rlen);
+      } else {
+        // consume packet and send out to node
+        while(cmdPtr < tlen){
+          bulkAddress[4] = tbuffer[cmdPtr++];
+          if(bulkAddress[4] != 0xFF) {
+            // IF INDEX == 255, skip it
+            radioSetAddress(bulkAddress);
+            // bulk node packet includes DISPLAY_COLOR command when declared
+            bulkNodePacket[1] = tbuffer[cmdPtr++]; //R
+            bulkNodePacket[2] = tbuffer[cmdPtr++]; //G
+            bulkNodePacket[3] = tbuffer[cmdPtr++]; //B
+            if(needAck){
+              status = radioSendPacket(bulkNodePacket, 4, rbuffer, &rlen);
+            }else{
+              radioSendPacketNoAck(bulkNodePacket, 4);
+            }
           }else{
-            radioSendPacketNoAck(bulkNodePacket, 4);
+            cmdPtr += 3;
           }
-        }else{
-          cmdPtr += 3;
         }
       }
 
